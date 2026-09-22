@@ -3,7 +3,12 @@
 원본 베이스라인 코드를 **직접 고쳐가며** 점수를 올리는 방법입니다.
 코딩을 잘 몰라도 따라올 수 있도록, **어느 셀의 어느 줄을 무엇으로 바꾸는지** 하나씩 적었습니다.
 
-> **더 빠른 길:** 그냥 `vqa_qwen25vl_solution.ipynb`를 쓰시면 아래가 전부 적용되어 있습니다.
+> **읽는 규칙:**
+> - **"바꾸기 전"** 블록은 *어디를 고칠지 찾기 위한* 것입니다. `...` 나 "생략"이 있을 수 있습니다.
+> - **"바꾼 후"** 블록은 **항상 그대로 복사해서 쓸 수 있는 완전한 코드**입니다. 생략이 없습니다.
+
+> **더 빠른 길:** 그냥 `vqa_qwen25vl_solution.ipynb`(전체 재작성판) 또는
+> `baseline_v3_fixed.ipynb`(원본 구조를 유지하며 고친 판)를 쓰시면 아래가 전부 적용되어 있습니다.
 > 하지만 **직접 고쳐봐야 이해가 됩니다.** 그리고 대회 발표 때 "무엇을 왜 바꿨는지"를
 > 설명할 수 있어야 하니, 한 번은 손으로 해보시길 권합니다.
 
@@ -659,17 +664,24 @@ train_df = train_df.sample(
             gold = str(row["answer"]).strip().lower()
 ```
 
+> ⚠️ 아래는 **생략 없는 완전한 메서드**입니다. `__getitem__` **전체를 통째로** 이걸로 바꾸세요.
+> (이전 판에서는 `messages` 만드는 부분을 "생략"으로 표시했는데, 그러면 복사했을 때
+> 그 코드가 사라져서 `NameError: name 'messages' is not defined` 가 납니다.)
+
 ```python
-# 바꾼 후
+# 바꾼 후 — 메서드 전체
     def __getitem__(self, i):
         row = self.df.iloc[i]
         img = load_image(row["path"])              # 2단계 함수
 
         q = str(row["question"])
         options = [str(row["a"]), str(row["b"]), str(row["c"]), str(row["d"])]
-        gold_idx = ["a", "b", "c", "d"].index(str(row["answer"]).strip().lower())
 
+        gold_idx = 0
         if self.train:
+            ans = str(row["answer"]).strip().lower()[:1]
+            gold_idx = ["a", "b", "c", "d"].index(ans) if ans in ["a","b","c","d"] else 0
+
             # 보기 순서를 섞고, 정답 글자도 따라서 바꾼다
             # (random은 베이스라인 첫 셀에서 이미 import 되어 있습니다)
             rng = random.Random(SEED * 1000003 + i)
@@ -680,10 +692,21 @@ train_df = train_df.sample(
 
         user_text = build_mc_prompt(q, *options)
 
-        # (messages 만드는 부분은 그대로 — 생략)
+        # ★ 이 블록을 지우면 NameError가 납니다. 반드시 남겨두세요.
+        messages = [
+            {"role": "system", "content": [{"type": "text", "text": SYSTEM_INSTRUCT}]},
+            {"role": "user", "content": [
+                {"type": "image", "image": img},
+                {"type": "text", "text": user_text},
+            ]},
+        ]
 
         if self.train:
             gold = ["a", "b", "c", "d"][gold_idx]
+            messages.append({"role": "assistant",
+                             "content": [{"type": "text", "text": gold}]})
+
+        return {"messages": messages, "image": img}
 ```
 
 ### ⚠️ 가장 흔한 실수

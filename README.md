@@ -4,6 +4,7 @@
 베이스라인(v3)의 구조를 유지하면서, **점수에 실제로 영향이 큰 부분만 골라** 수정했습니다.
 
 - 메인 코드: **[`vqa_qwen25vl_solution.ipynb`](./vqa_qwen25vl_solution.ipynb)** — 위에서부터 순서대로 실행하면 `submission.csv`가 생성됩니다.
+- **원본 구조 유지 수정판: [`baseline_v3_fixed.ipynb`](./baseline_v3_fixed.ipynb)** — 배포된 Colab 베이스라인의 셀 구성을 그대로 두고 버그만 고친 뒤 개선을 얹은 버전. 전체 재작성판이 부담스러우면 이쪽을 쓰세요.
 - **단계별 수정 가이드: [`MIGRATION.md`](./MIGRATION.md)** — 베이스라인 v3를 **직접 고쳐가며** 올리고 싶다면 이 문서를 보세요. 어느 셀의 어느 줄을 무엇으로 바꾸는지 10단계로 정리되어 있습니다.
 - 로직 단위 테스트: [`tests/test_logic.py`](./tests/test_logic.py) — GPU 없이 `python tests/test_logic.py`로 검증 가능
 - 가이드 정합성 검사: [`tests/verify_migration_guide.py`](./tests/verify_migration_guide.py) — `MIGRATION.md`의 "바꾸기 전" 코드가 실제 베이스라인과 일치하는지 자동 대조
