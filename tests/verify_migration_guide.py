@@ -1,10 +1,20 @@
 # -*- coding: utf-8 -*-
-import re, io, difflib
+"""MIGRATION.md의 '바꾸기 전' 코드가 실제 베이스라인 v3와 일치하는지 검사한다.
 
-base = io.open("baseline_v3.py", encoding="utf-8").read()
+가이드를 고친 뒤 아래를 실행하세요:
+
+    python tests/verify_migration_guide.py
+
+원본에 없는 코드를 "바꾸기 전"이라고 적어두면, 그대로 따라 한 사람이 에러를 만납니다.
+불일치가 있으면 종료 코드 1로 끝납니다.
+"""
+import re, io, os, sys, difflib
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+base = io.open(os.path.join(HERE, "baseline_v3_reference.py"), encoding="utf-8").read()
 base_lines = [x.strip() for x in base.split("\n") if x.strip()]
 base_norm = re.sub(r"[ \t]+", " ", base)
-md = io.open("/home/user/ai_challenge/MIGRATION.md", encoding="utf-8").read()
+md = io.open(os.path.join(HERE, os.pardir, "MIGRATION.md"), encoding="utf-8").read()
 
 # 1) "### 바꾸기 전" 헤딩 뒤의 첫 python 블록
 #  2) "# 바꾸기 전" 주석으로 시작하는 블록
@@ -49,5 +59,6 @@ print("=" * 74)
 if problems:
     print(f"❌ 수정 필요: {len(problems)}곳")
     for s, _ in problems: print("   -", s)
+    sys.exit(1)
 else:
     print("✅ 모든 '바꾸기 전' 블록이 원본과 일치")
