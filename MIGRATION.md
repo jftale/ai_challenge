@@ -393,33 +393,82 @@ Qwen3-VL은 Qwen2.5-VL 대비 이런 점들이 좋아졌습니다:
 
 설치 후 **런타임 → 세션 다시 시작**을 꼭 해주세요.
 
-**(2) 모델 이름**
+**(2) "라이브러리, 데이터, 설정" 셀 — 묶음 import 안에서 클래스 이름만 교체**
+
+> ⚠️ **묶음 전체를 지우면 안 됩니다.** 나머지 3개도 뒤에서 쓰이므로,
+> 지우면 `NameError: name 'AutoProcessor' is not defined` 같은 에러가 납니다.
+> **첫 줄 한 개만** 바꾸세요.
+
+```python
+# 바꾸기 전
+from transformers import (
+    Qwen2_5_VLForConditionalGeneration,     # ← 이 줄만 교체
+    AutoProcessor,
+    BitsAndBytesConfig,
+    get_linear_schedule_with_warmup
+)
+```
+
+```python
+# 바꾼 후
+from transformers import (
+    AutoModelForImageTextToText,            # ← 교체됨. 나머지 3개는 그대로!
+    AutoProcessor,
+    BitsAndBytesConfig,
+    get_linear_schedule_with_warmup
+)
+```
+
+**(3) 같은 셀 — 모델 이름과 픽셀 단위**
 
 ```python
 # 바꾸기 전
 MODEL_ID = "Qwen/Qwen2.5-VL-3B-Instruct"
-
-# 바꾼 후
-MODEL_ID = "Qwen/Qwen3-VL-8B-Instruct"
 ```
 
-**(3) 모델 로드 클래스**
+```python
+# 바꾼 후
+MODEL_ID = "Qwen/Qwen3-VL-8B-Instruct"
+PX = 32 if "Qwen3-VL" in MODEL_ID else 28   # 토큰 1개가 담는 픽셀 (모델마다 다름)
+
+# 버전이 낮으면 여기서 바로 잡아줍니다 (런타임 재시작을 깜빡하는 실수 방지)
+import transformers
+print("transformers:", transformers.__version__)
+assert tuple(int(x) for x in transformers.__version__.split(".")[:2]) >= (4, 57), (
+    "Qwen3-VL은 transformers 4.57 이상이 필요합니다. "
+    "설치 후 [런타임 → 세션 다시 시작]을 했는지 확인하세요."
+)
+```
+
+**(4) "모델, Processor" 셀 — 클래스 이름 교체**
+
+`from_pretrained`의 **인자는 하나도 바꿀 필요가 없습니다.** 클래스 이름만 바뀝니다.
 
 ```python
 # 바꾸기 전
-from transformers import Qwen2_5_VLForConditionalGeneration
 base_model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
-    MODEL_ID, quantization_config=bnb_config, device_map={"": 0},
-    torch_dtype=torch.float16, trust_remote_code=True,
-)
-
-# 바꾼 후 (어떤 VLM이든 열리는 범용 클래스)
-from transformers import AutoModelForImageTextToText
-base_model = AutoModelForImageTextToText.from_pretrained(
-    MODEL_ID, quantization_config=bnb_config, device_map={"": 0},
-    torch_dtype=torch.float16, trust_remote_code=True,
+    MODEL_ID,
+    quantization_config=bnb_config,
+    device_map={"": 0},
+    torch_dtype=torch.float16,
+    trust_remote_code=True,
 )
 ```
+
+```python
+# 바꾼 후
+base_model = AutoModelForImageTextToText.from_pretrained(
+    MODEL_ID,
+    quantization_config=bnb_config,
+    device_map={"": 0},
+    torch_dtype=torch.float16,
+    trust_remote_code=True,
+)
+```
+
+> 💡 `AutoModelForImageTextToText`는 **Qwen2.5-VL도 그대로 열립니다.**
+> 그래서 모델을 아직 안 바꿀 생각이어도 (2)(4)의 클래스 교체는 **지금 해둬도 안전**합니다.
+> 나중에 `MODEL_ID` 한 줄만 바꾸면 모델이 교체되는 구조가 됩니다.
 
 ### ⚠️ 여기서 가장 많이 실수합니다
 
@@ -438,14 +487,12 @@ processor = AutoProcessor.from_pretrained(
 )
 ```
 
-실수를 막으려면 숫자를 변수로 빼두는 게 좋습니다:
+(3)에서 `PX`를 이미 만들어뒀으므로, processor는 이렇게 쓰면 모델에 따라 자동으로 맞춰집니다:
 
 ```python
-PX = 32 if "Qwen3-VL" in MODEL_ID else 28     # 모델에 따라 자동으로 맞춘다
-
 processor = AutoProcessor.from_pretrained(
     MODEL_ID,
-    min_pixels=64 * PX * PX,
+    min_pixels=64 * PX * PX,        # 숫자 28/32를 직접 쓰지 않는 게 핵심
     max_pixels=1024 * PX * PX,
     trust_remote_code=True,
 )
