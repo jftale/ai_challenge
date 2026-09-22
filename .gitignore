@@ -1,0 +1,18 @@
+# 데이터 (대회 제공 — 저장소에 커밋하지 않음)
+train/
+test/
+dev/
+*.csv
+*.zip
+
+# 산출물
+vqa_out/
+lora_best/
+submission.csv
+report.json
+
+# 파이썬
+__pycache__/
+*.py[cod]
+.ipynb_checkpoints/
+.venv/
