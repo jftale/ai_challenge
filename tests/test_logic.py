@@ -211,5 +211,82 @@ for e in range(4):
     p = list(range(4)); rng3.shuffle(p); seen.add(tuple(p))
 ok(f"에폭마다 다른 순열 생성: {len(seen)}/4 가지")
 
+# ───────────────────────────────────────────────────────────
+# 7. MODEL_ZOO — 해상도 환산 단위와 버전 폴백
+# ───────────────────────────────────────────────────────────
+print("\n[7] 모델 교체 (MODEL_ZOO)")
+MODEL_ZOO = {
+    "qwen2.5-vl-3b":    dict(repo="Qwen/Qwen2.5-VL-3B-Instruct",    px_unit=28, min_tf="4.51.0"),
+    "qwen2.5-vl-7b":    dict(repo="Qwen/Qwen2.5-VL-7B-Instruct",    px_unit=28, min_tf="4.51.0"),
+    "qwen2.5-vl-32b":   dict(repo="Qwen/Qwen2.5-VL-32B-Instruct",   px_unit=28, min_tf="4.51.0"),
+    "qwen3-vl-4b":      dict(repo="Qwen/Qwen3-VL-4B-Instruct",      px_unit=32, min_tf="4.57.0"),
+    "qwen3-vl-8b":      dict(repo="Qwen/Qwen3-VL-8B-Instruct",      px_unit=32, min_tf="4.57.0"),
+    "qwen3-vl-32b":     dict(repo="Qwen/Qwen3-VL-32B-Instruct",     px_unit=32, min_tf="4.57.0"),
+    "qwen3-vl-30b-a3b": dict(repo="Qwen/Qwen3-VL-30B-A3B-Instruct", px_unit=32, min_tf="4.57.0"),
+}
+
+def _ver(s): return tuple(int(x) for x in re.findall(r"\d+", s)[:3])
+def resolve_model(key, fallback, tf_version):
+    return fallback if _ver(MODEL_ZOO[key]["min_tf"]) > _ver(tf_version) else key
+
+assert resolve_model("qwen3-vl-8b", "qwen2.5-vl-7b", "4.51.3") == "qwen2.5-vl-7b"
+assert resolve_model("qwen3-vl-8b", "qwen2.5-vl-7b", "4.57.0") == "qwen3-vl-8b"
+assert resolve_model("qwen3-vl-8b", "qwen2.5-vl-7b", "4.60.1") == "qwen3-vl-8b"
+assert resolve_model("qwen3-vl-8b", "qwen2.5-vl-7b", "5.0.0")  == "qwen3-vl-8b"
+assert resolve_model("qwen2.5-vl-7b", "qwen2.5-vl-3b", "4.51.0") == "qwen2.5-vl-7b"
+ok("transformers 버전이 낮으면 자동 폴백, 충분하면 최신 모델 유지")
+
+def tokens_to_px(n, px_unit): return int(n) * px_unit * px_unit
+q25, q3 = tokens_to_px(1280, 28), tokens_to_px(1280, 32)
+assert q25 == 1003520 and q3 == 1310720
+assert abs(q3 / q25 - (32/28) ** 2) < 1e-9
+ok(f"같은 1280토큰 예산 → Qwen2.5-VL {q25/1e6:.2f}Mpx / Qwen3-VL {q3/1e6:.2f}Mpx ({q3/q25-1:+.0%})")
+
+base = tokens_to_px(256, 28)
+assert int(base ** 0.5) == 448
+ok(f"베이스라인 256토큰 = {int(base**0.5)}px  vs  1280토큰 = {int(q3**0.5)}px ({q3/base:.1f}배)")
+
+wrong = tokens_to_px(1280, 28)          # Qwen3로 바꿨는데 px_unit은 28 그대로인 경우
+assert wrong < q3
+ok(f"px_unit 미갱신 시 해상도 {1 - wrong/q3:.0%} 손실 — 그래서 ZOO에 넣어 자동화")
+
+# ───────────────────────────────────────────────────────────
+# 8. assistant 헤더 자동 추출 (chat template 비의존)
+# ───────────────────────────────────────────────────────────
+print("\n[8] assistant 헤더 자동 추출")
+def chatml(msgs, add_generation_prompt=False):
+    out = ""
+    for m in msgs:
+        txt = "".join(c.get("text", "") for c in m["content"])
+        out += f"<|im_start|>{m['role']}\n{txt}<|im_end|>\n"
+    return out + ("<|im_start|>assistant\n" if add_generation_prompt else "")
+
+def llama3(msgs, add_generation_prompt=False):
+    out = "<|begin_of_text|>"
+    for m in msgs:
+        txt = "".join(c.get("text", "") for c in m["content"])
+        out += f"<|start_header_id|>{m['role']}<|end_header_id|>\n\n{txt}<|eot_id|>"
+    return out + ("<|start_header_id|>assistant<|end_header_id|>\n\n" if add_generation_prompt else "")
+
+def derive_header(apply):
+    probe = [{"role": "user", "content": [{"type": "text", "text": "Q"}]}]
+    closed = apply(probe, add_generation_prompt=False)
+    opened = apply(probe, add_generation_prompt=True)
+    if opened.startswith(closed) and len(opened) > len(closed):
+        return opened[len(closed):]
+    return "<|im_start|>assistant\n"
+
+assert derive_header(chatml) == "<|im_start|>assistant\n"
+assert derive_header(llama3) == "<|start_header_id|>assistant<|end_header_id|>\n\n"
+ok("ChatML(Qwen)·Llama3 템플릿 모두에서 헤더 정확 추출 — 하드코딩 불필요")
+
+for apply in (chatml, llama3):
+    hdr = derive_header(apply)
+    full = apply([{"role": "user", "content": [{"type": "text", "text": "Q"}]},
+                  {"role": "assistant", "content": [{"type": "text", "text": "c"}]}])
+    i = full.rfind(hdr)
+    assert i >= 0 and full[i + len(hdr):].startswith("c"), (hdr, full)
+ok("헤더 바로 뒤가 정답 글자 — 라벨 마스킹 경계가 정확함")
+
 print("\n" + "="*50)
 print("모든 로직 테스트 통과 ✅")
