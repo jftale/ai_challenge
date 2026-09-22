@@ -241,7 +241,7 @@ def score_one(img, question, options):
     messages = [
         {"role": "system", "content": [{"type": "text", "text": SYSTEM_INSTRUCT}]},
         {"role": "user", "content": [
-            {"type": "image"},
+            {"type": "image", "image": img},      # 베이스라인과 동일한 형태
             {"type": "text", "text": user_text},
         ]},
     ]
@@ -317,7 +317,7 @@ print(submission["answer"].value_counts())
 
 4단계에서 만든 추론 루프의 `for i in tqdm(...)` 안쪽
 
-### 바꾸기 전
+### 바꾸기 전 (= 원본이 아니라 **4단계를 적용한 뒤**의 코드입니다)
 
 ```python
 for i in tqdm(range(len(test_df)), desc="Inference", unit="sample"):
@@ -618,11 +618,19 @@ print("✅ 정상")
 **어디를?** "라이브러리, 데이터, 설정" 셀
 
 ```python
-# 바꾸기 전 — 데이터를 버릴 이유가 없습니다
-train_df = train_df.sample(n=min(1000, len(train_df)), random_state=SEED).reset_index(drop=True)
+# 바꾸기 전 — 원본은 이렇게 4줄로 되어 있습니다 ("학습데이터 200개만 추출" 주석 아래)
+train_df = train_df.sample(
+    n=min(1000, len(train_df)),
+    random_state=SEED
+).reset_index(drop=True)
+```
 
-# 바꾼 후
-train_df = train_df.sample(frac=1.0, random_state=SEED).reset_index(drop=True)   # 섞기만 하고 전부 사용
+```python
+# 바꾼 후 — 섞기만 하고 전부 사용
+train_df = train_df.sample(
+    frac=1.0,
+    random_state=SEED
+).reset_index(drop=True)
 ```
 
 > **주의:** T4에서 전체(수천 건)를 돌리면 몇 시간이 걸립니다.
@@ -686,12 +694,27 @@ train_df = train_df.sample(frac=1.0, random_state=SEED).reset_index(drop=True)  
 확인하는 법:
 
 ```python
+import re as _re
+
 _ds = VQAMCDataset(train_df.head(1), processor, train=True)
-s = _ds[0]
-print("정답으로 학습되는 글자:", s["messages"][-1]["content"][0]["text"])
-print("그 글자가 가리키는 보기:", s["messages"][1]["content"][1]["text"])
-# 원본 정답 내용과 같은지 눈으로 대조
-print("원본 정답 내용:", train_df.iloc[0][train_df.iloc[0]["answer"]])
+_s = _ds[0]
+
+gold_letter = _s["messages"][-1]["content"][0]["text"]     # 학습되는 정답 "글자"
+prompt_text = _s["messages"][1]["content"][1]["text"]      # 보기가 섞여 들어간 프롬프트
+
+_row = train_df.iloc[0]
+true_option = str(_row[_row["answer"]]).strip()            # 원본 CSV의 정답 "내용"
+
+# 프롬프트에서 "(그 글자) 내용" 줄을 찾아 실제로 뭐가 놓였는지 확인
+_m = _re.search(rf"^\({gold_letter}\) (.+)$", prompt_text, _re.M)
+shown_option = _m.group(1).strip() if _m else "(못 찾음)"
+
+print("학습되는 정답 글자 :", gold_letter)
+print("그 자리에 놓인 보기 :", shown_option)
+print("원본 정답 내용      :", true_option)
+
+assert shown_option == true_option, "❌ 셔플과 정답이 어긋났습니다! gold_idx 갱신을 확인하세요."
+print("✅ 일치 — 셔플이 정답과 함께 움직였습니다")
 ```
 
 ---
@@ -710,19 +733,44 @@ print("원본 정답 내용:", train_df.iloc[0][train_df.iloc[0]["answer"]])
 
 학습 루프의 검증 부분
 
-### 바꾸기 전
+### 바꾸기 전 (원본 그대로 — `# 검증` 부터 `print(...)` 까지 **이 블록 전체를 삭제**합니다)
 
 ```python
     # 검증
     model.eval()
     val_loss_sum = 0.0
+
     with torch.no_grad():
-        for vb in tqdm(valid_loader, ...):
-            ...
+        for vb in tqdm(
+            valid_loader,
+            desc=f"Epoch {epoch + 1} [valid]",
+            unit="batch",
+        ):
+            vb = {
+                k: v.to(device)
+                for k, v in vb.items()
+            }
+
+            with torch.autocast(
+                device_type="cuda",
+                dtype=torch.float16,
+            ):
+                val_outputs = model(**vb)
+
             val_loss_sum += val_outputs.loss.item()
+
+            del val_outputs, vb
+
     avg_val_loss = val_loss_sum / len(valid_loader)
-    print(f"[Epoch {epoch + 1}] valid loss: {avg_val_loss:.4f}")
+
+    print(
+        f"[Epoch {epoch + 1}] "
+        f"valid loss: {avg_val_loss:.4f}"
+    )
 ```
+
+> 이 블록을 지우면 `valid_loader`와 `valid_ds`는 더 이상 쓰이지 않습니다.
+> 그냥 둬도 아무 문제 없으니 **굳이 지우지 마세요.**
 
 ### 바꾼 후
 
@@ -736,11 +784,14 @@ best_acc, best_state = -1.0, None      # 지금까지 가장 좋았던 기록
 
 def eval_accuracy(df):
     """검증 세트 정확도를 잰다 (4단계에서 만든 score_one 재사용)"""
+    # 호출 시점의 상태를 기억해뒀다가 끝날 때 그대로 되돌립니다.
+    # 학습 도중에도, 학습이 다 끝난 뒤(10단계)에도 안전하게 쓰려면 이게 필요합니다.
+    was_training = model.training
+    was_gc = bool(getattr(model, "is_gradient_checkpointing", False))
+
     model.eval()
-    try:
+    if was_gc:
         model.gradient_checkpointing_disable()
-    except Exception:
-        pass
     model.config.use_cache = True
 
     correct = 0
@@ -752,10 +803,12 @@ def eval_accuracy(df):
         if LETTERS[p.argmax()] == str(row["answer"]).strip().lower():
             correct += 1
 
-    # 학습 설정으로 되돌리기 (★ 안 하면 다음 스텝에서 메모리 폭증)
-    model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})
-    model.config.use_cache = False
-    model.train()
+    # ★ 원래 상태로 복원 — 학습 중이었다면 반드시 되살려야 메모리가 안 터집니다
+    if was_gc:
+        model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})
+        model.config.use_cache = False
+    if was_training:
+        model.train()
     return correct / len(df)
 ```
 
@@ -765,7 +818,7 @@ def eval_accuracy(df):
 
 ```python
     # ↓ 이 블록 전체가 for epoch 루프 안에 들어갑니다 (공백 4칸 들여쓰기)
-    acc = eval_accuracy(valid_subset)
+    acc = eval_accuracy(valid_small)
     print(f"[Epoch {epoch + 1}] 검증 정확도: {acc*100:.2f}%")
 
     if acc > best_acc:
@@ -795,12 +848,14 @@ if best_state is not None:
 
 ### 속도 주의
 
-검증 1회가 수 분 걸릴 수 있습니다. 검증 세트가 크면 앞부분만 쓰세요:
+검증 1회가 수 분 걸릴 수 있습니다. **검증 세트를 작게 잘라 쓰는 걸 권합니다.**
+(A) 블록에 아래를 같이 넣어두세요. **10단계에서도 이 `valid_small`을 씁니다.**
 
 ```python
 valid_small = valid_subset.head(200).reset_index(drop=True)
-acc = eval_accuracy(valid_small)
 ```
+
+그리고 (B)에서 `eval_accuracy(valid_subset)` 대신 `eval_accuracy(valid_small)` 을 쓰면 됩니다.
 
 ---
 
@@ -853,7 +908,25 @@ ctx = contextlib.nullcontext() if USE_FINETUNED else model.disable_adapter()
 with ctx:
     preds = []
     for i in tqdm(range(len(test_df)), desc="Inference", unit="sample"):
-        ...   # 5단계의 추론 루프를 그대로
+        # 5단계에서 만든 루프 본문을 그대로 넣되,
+        # with 블록 안으로 들어가므로 들여쓰기를 한 단계(공백 4칸) 더 줍니다.
+        row = test_df.iloc[i]
+        img = load_image(row["path"])
+        options = [row["a"], row["b"], row["c"], row["d"]]
+
+        probs = np.zeros(4)
+        for sft in range(N_PERM):
+            perm = [(k + sft) % 4 for k in range(4)]
+            shown = [options[perm[k]] for k in range(4)]
+            p = score_one(img, row["question"], shown)
+            for k in range(4):
+                probs[perm[k]] += p[k]
+
+        preds.append(LETTERS[probs.argmax()])
+
+submission = pd.DataFrame({"id": test_df["id"], "answer": preds})
+submission.to_csv("/content/submission.csv", index=False)
+print("Saved /content/submission.csv")
 ```
 
 ---
