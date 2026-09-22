@@ -4,6 +4,7 @@
 베이스라인(v3)의 구조를 유지하면서, **점수에 실제로 영향이 큰 부분만 골라** 수정했습니다.
 
 - 메인 코드: **[`vqa_qwen25vl_solution.ipynb`](./vqa_qwen25vl_solution.ipynb)** — 위에서부터 순서대로 실행하면 `submission.csv`가 생성됩니다.
+- **단계별 수정 가이드: [`MIGRATION.md`](./MIGRATION.md)** — 베이스라인 v3를 **직접 고쳐가며** 올리고 싶다면 이 문서를 보세요. 어느 셀의 어느 줄을 무엇으로 바꾸는지 10단계로 정리되어 있습니다.
 - 로직 단위 테스트: [`tests/test_logic.py`](./tests/test_logic.py) — GPU 없이 `python tests/test_logic.py`로 검증 가능
 
 ---
